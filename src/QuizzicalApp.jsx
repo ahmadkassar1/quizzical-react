@@ -1,237 +1,149 @@
+import { useEffect, useRef, useState } from "react";
+import Question from "./components/Question.jsx";
+import QuizResults from "./components/QuizResults.jsx";
+import { fetchQuestions } from "./lib/trivia-api.js";
+import { scoreQuiz } from "./lib/quiz.js";
 import "./QuizicalApp.css";
-import { useState } from "react";
 
-// API Service
-const quizAPI = {
-  async fetchQuestions(amount = 5) {
-    try {
-      const res = await fetch(
-        `https://opentdb.com/api.php?amount=${amount}&type=multiple`
-      );
-      const data = await res.json();
-
-      return data.results.map((q) => ({
-        ...q,
-        allAnswers: this.shuffleAnswers([
-          ...q.incorrect_answers,
-          q.correct_answer,
-        ]),
-        id: crypto.randomUUID(),
-      }));
-    } catch (err) {
-      console.error("Error fetching questions:", err);
-      throw err;
-    }
-  },
-
-  shuffleAnswers(answers) {
-    return answers.sort(() => Math.random() - 0.5);
-  },
+const phaseTitles = {
+  start: "Ready for a round?",
+  loading: "Loading questions…",
+  quiz: "Five questions",
+  results: "Your results",
+  error: "Could not load your quiz",
 };
 
-// Decode HTML entities utility
-const decodeHTML = (html) => {
-  const txt = document.createElement("textarea");
-  txt.innerHTML = html;
-  return txt.value;
-};
-
-// StartPage Component
-function StartPage({ onStart }) {
-  return (
-    <section className="start-page">
-      <h1>Quizzical</h1>
-      <p>
-        Test your knowledge with fun, random trivia questions! Click below to
-        start a new quiz and see how many you can get right.
-      </p>
-      <button onClick={onStart}>Start Quiz</button>
-    </section>
-  );
-}
-
-// Question Component
-function Question({
-  question,
-  questionIndex,
-  selectedAnswer,
-  onSelect,
-  showResults,
-}) {
-  const getAnswerClassName = (answer) => {
-    if (!showResults) return "";
-
-    if (answer === question.correct_answer) return "correct";
-    if (answer === selectedAnswer && answer !== question.correct_answer)
-      return "incorrect";
-    return "dimmed";
-  };
-
-  return (
-    <div className="question-wrapper">
-      <h3>{decodeHTML(question.question)}</h3>
-      <div className="answers-wrapper">
-        {question.allAnswers.map((answer, index) => {
-          const answerId = `answer${index}-${questionIndex}`;
-          const answerClass = getAnswerClassName(answer);
-
-          return (
-            <div key={index}>
-              <input
-                type="radio"
-                name={`answer-${questionIndex}`}
-                id={answerId}
-                value={answer}
-                checked={selectedAnswer === answer}
-                onChange={(e) => onSelect(e, questionIndex)}
-                disabled={showResults}
-              />
-              <label htmlFor={answerId} className={answerClass}>
-                {decodeHTML(answer)}
-              </label>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// Results Component
-function Results({ score, total, onPlayAgain }) {
-  return (
-    <div className="results-section">
-      <h2>
-        You scored {score}/{total} correct answers!
-      </h2>
-      <button onClick={onPlayAgain}>Play Again</button>
-    </div>
-  );
-}
-
-// Loading Component
-function Loading() {
-  return (
-    <div className="loading">
-      <div className="spinner"></div>
-      <p>Loading questions...</p>
-    </div>
-  );
-}
-
-// Main App Component
-function QuizzicalApp() {
-  const [isQuizStarted, setIsQuizStarted] = useState(false);
+export default function QuizzicalApp() {
+  const [phase, setPhase] = useState("start");
   const [questions, setQuestions] = useState([]);
-  const [selectedAnswers, setSelectedAnswers] = useState({});
-  const [showResults, setShowResults] = useState(false);
-  const [score, setScore] = useState(0);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [answers, setAnswers] = useState({});
+  const [error, setError] = useState("");
+  const heading = useRef(null);
+  const requestPending = useRef(false);
 
-  async function startNewQuiz() {
-    setIsLoading(true);
-    setError(null);
+  useEffect(() => {
+    if (phase !== "start") heading.current?.focus();
+  }, [phase]);
 
+  async function startQuiz() {
+    if (requestPending.current) return;
+    requestPending.current = true;
+    setPhase("loading");
+    setError("");
     try {
-      const fetchedQuestions = await quizAPI.fetchQuestions(5);
-      setQuestions(fetchedQuestions);
-      setIsQuizStarted(true);
-      setSelectedAnswers({});
-      setShowResults(false);
-      setScore(0);
-    } catch (err) {
-      setError("Failed to load questions. Please try again.");
+      const nextQuestions = await fetchQuestions();
+      setQuestions(nextQuestions);
+      setAnswers({});
+      setPhase("quiz");
+    } catch (failure) {
+      setError(failure.message);
+      setPhase("error");
     } finally {
-      setIsLoading(false);
+      requestPending.current = false;
     }
   }
 
-  function selectAnswer(event, questionIndex) {
-    if (showResults) return;
-
-    setSelectedAnswers((prev) => ({
-      ...prev,
-      [questionIndex]: event.target.value,
-    }));
+  function selectAnswer(id, answer) {
+    setAnswers((previous) => ({ ...previous, [id]: answer }));
   }
 
-  function checkAnswers() {
-    let correctCount = 0;
-
-    questions.forEach((q, index) => {
-      if (selectedAnswers[index] === q.correct_answer) {
-        correctCount++;
-      }
-    });
-
-    setScore(correctCount);
-    setShowResults(true);
-  }
-
-  function playAgain() {
-    setIsQuizStarted(false);
-    setQuestions([]);
-    setSelectedAnswers({});
-    setShowResults(false);
-    setScore(0);
-  }
-
-  const allQuestionsAnswered =
-    questions.length > 0 &&
-    Object.keys(selectedAnswers).length === questions.length;
+  const complete =
+    questions.length > 0 && questions.every((question) => answers[question.id]);
+  const score = scoreQuiz(questions, answers);
+  const reviewed = phase === "results";
 
   return (
     <main>
-      <div className="right-corner"></div>
-      <div className="left-corner"></div>
+      <div className="right-corner" aria-hidden="true" />
+      <div className="left-corner" aria-hidden="true" />
+      <div className="app-content">
+        <header className="quiz-header">
+          <h1>Quizzical</h1>
+          <h2 ref={heading} tabIndex={-1}>
+            {phaseTitles[phase]}
+          </h2>
+        </header>
 
-      {!isQuizStarted && !isLoading && <StartPage onStart={startNewQuiz} />}
-
-      {isLoading && <Loading />}
-
-      {error && (
-        <div className="error-message">
-          <p>{error}</p>
-          <button onClick={startNewQuiz}>Try Again</button>
-        </div>
-      )}
-
-      {isQuizStarted && !isLoading && (
-        <div className="quiz-container">
-          <div className="questions-section">
-            {questions.map((q, index) => (
-              <Question
-                key={q.id}
-                question={q}
-                questionIndex={index}
-                selectedAnswer={selectedAnswers[index]}
-                onSelect={selectAnswer}
-                showResults={showResults}
-              />
-            ))}
-          </div>
-
-          {!showResults ? (
-            <button
-              type="button"
-              onClick={checkAnswers}
-              disabled={!allQuestionsAnswered}
-              className={!allQuestionsAnswered ? "disabled" : ""}
-            >
-              Check Answers
+        {phase === "start" && (
+          <section className="start-page" aria-label="Start a quiz">
+            <p>
+              Test your knowledge with five random trivia questions. Choose your
+              answers, then see how you did.
+            </p>
+            <button type="button" onClick={startQuiz}>
+              Start Quiz
             </button>
-          ) : (
-            <Results
-              score={score}
-              total={questions.length}
-              onPlayAgain={playAgain}
-            />
-          )}
-        </div>
-      )}
+          </section>
+        )}
+
+        {phase === "loading" && (
+          <div className="loading" role="status">
+            <div className="spinner" aria-hidden="true" />
+            <p>Fetching questions from Open Trivia Database.</p>
+          </div>
+        )}
+
+        {phase === "error" && (
+          <section
+            className="error-message"
+            aria-label="Question service error"
+          >
+            <p role="alert">{error}</p>
+            <button type="button" onClick={startQuiz}>
+              Try Again
+            </button>
+          </section>
+        )}
+
+        {(phase === "quiz" || reviewed) && (
+          <div className="quiz-container">
+            <div className="questions-section">
+              {questions.map((question, index) => (
+                <Question
+                  key={question.id}
+                  question={question}
+                  number={index + 1}
+                  selection={answers[question.id]}
+                  onSelect={selectAnswer}
+                  reviewed={reviewed}
+                />
+              ))}
+            </div>
+            {reviewed ? (
+              <QuizResults
+                score={score}
+                total={questions.length}
+                onPlayAgain={startQuiz}
+              />
+            ) : (
+              <>
+                <p className="answer-progress" aria-live="polite">
+                  {Object.keys(answers).length} of {questions.length} answered
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (complete) setPhase("results");
+                  }}
+                  disabled={!complete}
+                >
+                  Check Answers
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        <footer className="quiz-footer">
+          Questions by <a href="https://opentdb.com/">Open Trivia Database</a> ·{" "}
+          <a href="https://creativecommons.org/licenses/by-sa/4.0/">
+            CC BY-SA 4.0
+          </a>
+          <span>
+            Round results stay on this page and reset when you reload.
+          </span>
+        </footer>
+      </div>
     </main>
   );
 }
-
-export default QuizzicalApp;

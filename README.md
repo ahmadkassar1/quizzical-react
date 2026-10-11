@@ -1,5 +1,7 @@
 # Quizzical React
 
+[Live demo](https://quizzical-react-chi.vercel.app/) · [Source](https://github.com/ahmadkassar1/quizzical-react)
+
 A small React quiz that loads five multiple-choice questions from [Open Trivia Database](https://opentdb.com/). Choose one answer per question, check your score and start another round.
 
 ## Run locally
